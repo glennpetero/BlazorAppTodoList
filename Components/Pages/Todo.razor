@@ -1,0 +1,200 @@
+@page "/todo"
+@rendermode InteractiveServer
+@inject IJSRuntime JSRuntime
+@using System.Text.Json
+
+
+<div class="mx-auto p-3" style="max-width: 600px;">
+    
+    <h3 class="fw-bold mb-4 text-center text-dark" style="letter-spacing: -1px;">My Tasks</h3>
+
+    <!-- Main Input Group -->
+    <div class="input-group mb-4 shadow-sm rounded-3 overflow-hidden">
+        <input @bind="newTodo" @bind:event="oninput" @onkeydown="HandleKeyDown" class="form-control form-control-lg"
+               placeholder="Add a new task..." />
+               
+        <button @onclick="AddTodo" class="btn btn-primary px-4 fw-medium" type="button">Add Task</button>
+    </div>
+
+    <ul class="list-group shadow-sm">
+        @foreach (var item in todoItems)
+        {
+            <li
+                class="list-group-item todo-card d-flex align-items-center justify-content-between border-0 shadow-sm rounded-3 mb-2 py-3 bg-white">
+                <div class="d-flex align-items-center gap-3 flex-grow-1">
+                    <!-- Checkbox -->
+                    <input type="checkbox" @bind="item.IsDone" class="form-check-input border-secondary rounded-circle"
+                           style="width: 1.5rem; height: 1.5rem;" />
+                
+                    @if (editingItem == item)
+                    {
+                        <!-- Inline Edit Field -->
+                        <input @bind="item.Title" @bind:event="oninput" @onkeydown="(e) => HandleEditKeyDown(e)"
+                               class="form-control form-control-sm" />
+                    }
+                    else
+                    {
+                        <!-- Standard Text (Crosses out when done) -->
+                        <span class="fs-5 @(item.IsDone ? "text-decoration-line-through text-muted" : "")">
+                            @item.Title
+                        </span>
+                    }
+                </div>
+
+                <!-- Action Buttons Group -->
+                <div class="btn-group btn-group-sm action-buttons">
+                    @if (editingItem == item)
+                    {
+                        <!-- Save Icon/Button -->
+                        <button @onclick="SaveEdit" class="btn btn-success px-3" title="Save changes">
+                            Save
+                        </button>
+                    }
+                    else
+                    {
+                        <!-- Edit Button -->
+                        <button @onclick="() => StartEditing(item)" class="btn btn-outline-secondary px-3" title="Edit task"
+                                disabled="@item.IsDone">
+                            Edit
+                        </button>
+                    }
+                
+                    <!-- Delete Button -->
+                    <button @onclick="() => DeleteTodo(item)" class="btn btn-outline-danger px-3" title="Delete task">
+                        Delete
+                    </button>
+                </div>
+            </li>
+        }
+    </ul>
+
+    @if (todoItems.Any(item => item.IsDone))
+    {
+        <div class="d-flex justify-content-end mt-3 animate-fade-in">
+            <button @onclick="ClearCompleted"
+                    class="btn btn-link text-danger text-decoration-none fw-medium p-0 border-0 fs-6">
+                Clear all completed
+            </button>
+        </div>
+    }
+</div>
+
+<!-- Micro-Interactions Custom Styles -->
+<style>
+    .todo-card {
+        background-color: #ffffff;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Hover effect: Item lifts up and drops a richer shadow */
+    .todo-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06) !important;
+        background-color: #fefefe;
+    }
+
+    /* Keeps action buttons subtle until the user hovers over that specific item */
+    .action-buttons {
+        opacity: 0.4;
+        transition: opacity 0.2s ease-in-out;
+    }
+
+    .todo-card:hover .action-buttons {
+        opacity: 1;
+    }
+</style>
+
+@code {
+    private List<TodoItem> todoItems = new();
+    private string newTodo = "";
+    private TodoItem? editingItem = null;
+
+    // 1. Load tasks from local storage when the page loads
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "myTodoList");
+            if (!string.IsNullOrEmpty(json))
+            {
+                todoItems = JsonSerializer.Deserialize<List<TodoItem>>(json) ?? new();
+                StateHasChanged(); // Force Blazor to redraw with the loaded items
+            }
+        }
+    }
+
+    // 2. Helper method to save the current list state
+    private async Task SaveToLocalStorage()
+    {
+        var json = JsonSerializer.Serialize(todoItems);
+        await JSRuntime.InvokeVoidAsync("localStorage.setItem", "myTodoList", json);
+    }
+
+    // 3. Updated actions to save automatically on changes
+    private async Task AddTodo()
+    {
+        if (!string.IsNullOrWhiteSpace(newTodo))
+        {
+            todoItems.Add(new TodoItem { Title = newTodo, IsDone = false });
+            newTodo = "";
+            await SaveToLocalStorage();
+        }
+    }
+
+    private void StartEditing(TodoItem item)
+    {
+        editingItem = item;
+    }
+
+    private async Task SaveEdit()
+    {
+        editingItem = null;
+        await SaveToLocalStorage();
+    }
+
+    private async Task HandleEditKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SaveEdit();
+        }
+    }
+
+    private async Task DeleteTodo(TodoItem item)
+    {
+        todoItems.Remove(item);
+        if (editingItem == item) editingItem = null;
+        await SaveToLocalStorage();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await AddTodo();
+        }
+    }
+
+    private async Task ClearCompleted()
+    {
+        // Filter the list to keep only items that are NOT done
+        todoItems = todoItems.Where(item => !item.IsDone).ToList();
+    
+        // If you were editing an item that just got cleared, reset the pointer
+        if (editingItem != null && editingItem.IsDone)
+        {
+            editingItem = null;
+        }
+
+        // Save the newly cleaned list to the browser storage
+        await SaveToLocalStorage();
+    }
+
+
+    @* // Class definition if you don't have it in a separate file
+    public class TodoItem
+    {
+        public string Title { get; set; } = "";
+        public bool IsDone { get; set; }
+    } *@
+}
